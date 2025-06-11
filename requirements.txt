@@ -4,4 +4,6 @@ matplotlib
 seaborn
 openpyxl
 python-pptx
+pillow
+comtypes ; platform_system == "Windows"
 numpy
