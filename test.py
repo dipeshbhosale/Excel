@@ -1,3 +1,14 @@
+# Requirements:
+# streamlit
+# pandas
+# matplotlib
+# seaborn
+# openpyxl
+# python-pptx
+# pillow
+# comtypes (for pptx preview on Windows, optional)
+# numpy
+
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,6 +19,8 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.text import PP_ALIGN
 import numpy as np
+from PIL import Image
+import tempfile
 
 # === Placeholders for advanced modules ===
 # (Implement each in its own function for modularity)
@@ -59,26 +72,30 @@ def data_analysis_module(df):
         summary['categorical'] = cat_summary
     return summary, insights
 
-def plot_and_save(df, sheet_name):
+def plot_and_save(df, sheet_name, chart_selections=None):
     images = []
     captions = []
     num_cols = df.select_dtypes(include='number').columns
     cat_cols = df.select_dtypes(include='object').columns
 
-    # Numerical columns: histograms and line plots
-    for col in num_cols:
-        fig, ax = plt.subplots()
-        sns.histplot(df[col].dropna(), kde=True, ax=ax)
-        ax.set_title(f"Distribution of {col}")
-        buf = BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        images.append(buf.read())
-        captions.append(f"Distribution of {col} in {sheet_name}.")
-        plt.close(fig)
+    # Use chart_selections if provided, else default to all columns
+    selected_num_cols = chart_selections.get("num_cols", num_cols) if chart_selections else num_cols
+    selected_cat_cols = chart_selections.get("cat_cols", cat_cols) if chart_selections else cat_cols
+    chart_types = chart_selections.get("chart_types", ["hist", "line", "bar", "pie"]) if chart_selections else ["hist", "line", "bar", "pie"]
 
-        # Line plot if time-like index
-        if pd.api.types.is_datetime64_any_dtype(df.index):
+    # Numerical columns: histograms and line plots
+    for col in selected_num_cols:
+        if "hist" in chart_types:
+            fig, ax = plt.subplots()
+            sns.histplot(df[col].dropna(), kde=True, ax=ax)
+            ax.set_title(f"Distribution of {col}")
+            buf = BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            images.append(buf.read())
+            captions.append(f"Distribution of {col} in {sheet_name}.")
+            plt.close(fig)
+        if "line" in chart_types and pd.api.types.is_datetime64_any_dtype(df.index):
             fig, ax = plt.subplots()
             df[col].plot(ax=ax)
             ax.set_title(f"{col} over time")
@@ -90,29 +107,30 @@ def plot_and_save(df, sheet_name):
             plt.close(fig)
 
     # Categorical columns: bar plots and pie charts
-    for col in cat_cols:
+    for col in selected_cat_cols:
         vc = df[col].value_counts().head(10)
         if len(vc) > 1:
-            fig, ax = plt.subplots()
-            sns.barplot(x=vc.values, y=vc.index, ax=ax)
-            ax.set_title(f"Top categories in {col}")
-            buf = BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            images.append(buf.read())
-            captions.append(f"Top categories in {col} in {sheet_name}.")
-            plt.close(fig)
-
-            fig, ax = plt.subplots()
-            vc.plot.pie(autopct='%1.1f%%', ax=ax)
-            ax.set_ylabel('')
-            ax.set_title(f"Category distribution in {col}")
-            buf = BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            images.append(buf.read())
-            captions.append(f"Category distribution in {col} in {sheet_name}.")
-            plt.close(fig)
+            if "bar" in chart_types:
+                fig, ax = plt.subplots()
+                sns.barplot(x=vc.values, y=vc.index, ax=ax)
+                ax.set_title(f"Top categories in {col}")
+                buf = BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                images.append(buf.read())
+                captions.append(f"Top categories in {col} in {sheet_name}.")
+                plt.close(fig)
+            if "pie" in chart_types:
+                fig, ax = plt.subplots()
+                vc.plot.pie(autopct='%1.1f%%', ax=ax)
+                ax.set_ylabel('')
+                ax.set_title(f"Category distribution in {col}")
+                buf = BytesIO()
+                plt.savefig(buf, format='png')
+                buf.seek(0)
+                images.append(buf.read())
+                captions.append(f"Category distribution in {col} in {sheet_name}.")
+                plt.close(fig)
     return images, captions
 
 def add_title_slide(prs, file_name):
@@ -438,14 +456,48 @@ def generate_clear_chart(
         plt.show()
         plt.close(fig)
 
-# Example usage:
-# generate_clear_chart(df, chart_type="bar", x="Department", y="Expenses")
-# generate_clear_chart(df, chart_type="line", x="Date", y="Sales")
+def pptx_to_slide_images(pptx_bytes):
+    """Convert pptx bytes to a list of slide images (PNG)."""
+    import comtypes.client
+    import os
+    import uuid
+    import shutil
+
+    # Only works on Windows with PowerPoint installed
+    # Save pptx to temp file
+    tmp_dir = tempfile.mkdtemp()
+    pptx_path = os.path.join(tmp_dir, f"{uuid.uuid4()}.pptx")
+    with open(pptx_path, "wb") as f:
+        f.write(pptx_bytes)
+    # Export slides as PNG
+    powerpoint = comtypes.client.CreateObject("Powerpoint.Application")
+    powerpoint.Visible = 1
+    presentation = powerpoint.Presentations.Open(pptx_path)
+    export_dir = os.path.join(tmp_dir, "slides")
+    os.makedirs(export_dir, exist_ok=True)
+    presentation.SaveAs(export_dir, 17)  # 17 = ppSaveAsPNG
+    presentation.Close()
+    powerpoint.Quit()
+    # Collect slide images
+    slide_imgs = []
+    for fname in sorted(os.listdir(export_dir)):
+        if fname.endswith(".PNG"):
+            with open(os.path.join(export_dir, fname), "rb") as imgf:
+                slide_imgs.append(imgf.read())
+    shutil.rmtree(tmp_dir)
+    return slide_imgs
 
 def main():
     st.set_page_config(page_title="Data-Driven SaaS Assistant", layout="wide")
     st.title("Excel Data-Driven SaaS Assistant")
-    uploaded_file = st.file_uploader("Upload an Excel (.xlsx) or CSV (.csv) file", type=["xlsx", "csv"])
+
+    # Sidebar for upload and global options
+    with st.sidebar:
+        st.header("Upload & Settings")
+        uploaded_file = st.file_uploader("Upload Excel (.xlsx) or CSV (.csv)", type=["xlsx", "csv"])
+        st.markdown("---")
+        st.info("Configure your analysis and report below.")
+
     if uploaded_file is not None:
         try:
             file_name = uploaded_file.name
@@ -453,133 +505,319 @@ def main():
             if not file_bytes:
                 st.error("Uploaded file is empty.")
                 return
-            if file_name.lower().endswith(".xlsx"):
-                excel_buffer = BytesIO(file_bytes)
-                xls = pd.ExcelFile(excel_buffer, engine="openpyxl")
-                st.write(f"Detected sheets: {xls.sheet_names}")
-                all_images = []
-                all_captions = []
-                all_insights = []
-                for sheet in xls.sheet_names:
-                    st.subheader(f"Sheet: {sheet}")
-                    df = pd.read_excel(xls, sheet_name=sheet, engine="openpyxl")
-                    # --- Editable DataFrame ---
+            is_excel = file_name.lower().endswith(".xlsx")
+            is_csv = file_name.lower().endswith(".csv")
+            if is_excel or is_csv:
+                # Use columns for main workflow
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.subheader("Data Preview & Analysis")
+                with col2:
+                    st.subheader("Configuration")
+
+                # Data processing and configuration in sidebar
+                with st.sidebar:
+                    st.markdown("### Report Sections")
+                    show_data = st.checkbox("Show Data Table", value=True)
+                    show_summary = st.checkbox("Show Summary Statistics", value=True)
+                    show_charts = st.checkbox("Show Charts", value=True)
+                    show_qa = st.checkbox("Enable Data Q&A", value=True)
+                    show_report_edit = st.checkbox("Enable Report Editing", value=True)
+
+                # Main content in columns
+                with col1:
+                    all_images, all_captions, all_insights, summary, insights, images, captions = process_uploaded_data(
+                        file_name, file_bytes, is_excel,
+                        show_data=show_data,
+                        show_summary=show_summary,
+                        show_charts=show_charts,
+                        show_qa=show_qa
+                    )
+
+                # Report editing and generation in right column
+                with col2:
+                    if show_report_edit:
+                        st.subheader("Edit Report Structure")
+                        # --- Editable Report Structure Before Generation ---
+                        # Prepare editable structure: slides = [{type, title, content/image/caption}]
+                        slides = []
+
+                        # Title slide
+                        title_slide = {
+                            "type": "title",
+                            "title": "Data Analysis Report",
+                            "subtitle": f"File: {file_name}\nDate: {datetime.now().strftime('%Y-%m-%d')}"
+                        }
+                        slides.append(title_slide)
+
+                        # Chart slides
+                        for img, cap in zip(all_images, all_captions):
+                            slides.append({
+                                "type": "chart",
+                                "caption": cap,
+                                "image": img
+                            })
+
+                        # Key findings slide
+                        key_findings = all_insights if is_excel else (insights if insights else [])
+                        slides.append({
+                            "type": "summary",
+                            "title": "Key Findings",
+                            "insights": key_findings
+                        })
+
+                        # Editable UI for slides
+                        new_slides = []
+                        st.markdown("**You can edit, remove, or reorder slides below.**")
+                        for idx, slide in enumerate(slides):
+                            with st.expander(f"Slide {idx+1}: {slide['type'].capitalize()}"):
+                                remove = st.checkbox("Remove this slide", key=f"remove_slide_{idx}")
+                                if remove:
+                                    continue
+                                if slide["type"] == "title":
+                                    title = st.text_input("Title", value=slide["title"], key=f"title_{idx}")
+                                    subtitle = st.text_area("Subtitle", value=slide["subtitle"], key=f"subtitle_{idx}")
+                                    new_slides.append({
+                                        "type": "title",
+                                        "title": title,
+                                        "subtitle": subtitle
+                                    })
+                                elif slide["type"] == "chart":
+                                    caption = st.text_area("Caption", value=slide["caption"], key=f"caption_{idx}")
+                                    st.image(slide["image"], caption="Chart Preview")
+                                    new_slides.append({
+                                        "type": "chart",
+                                        "caption": caption,
+                                        "image": slide["image"]
+                                    })
+                                elif slide["type"] == "summary":
+                                    title = st.text_input("Summary Slide Title", value=slide["title"], key=f"summary_title_{idx}")
+                                    insights_text = st.text_area(
+                                        "Key Findings (one per line)",
+                                        value="\n".join(slide["insights"]),
+                                        height=200,
+                                        key=f"insights_{idx}"
+                                    )
+                                    insights_list = [line.strip() for line in insights_text.split("\n") if line.strip()]
+                                    new_slides.append({
+                                        "type": "summary",
+                                        "title": title,
+                                        "insights": insights_list
+                                    })
+
+                        if st.button("Generate PowerPoint Report"):
+                            # Build PPTX from edited structure
+                            prs = Presentation()
+                            # Title slide
+                            for slide in new_slides:
+                                if slide["type"] == "title":
+                                    slide_layout = prs.slide_layouts[0]
+                                    s = prs.slides.add_slide(slide_layout)
+                                    s.shapes.title.text = slide["title"]
+                                    s.placeholders[1].text = slide["subtitle"]
+                            # Chart slides
+                            for slide in new_slides:
+                                if slide["type"] == "chart":
+                                    slide_layout = prs.slide_layouts[5]
+                                    s = prs.slides.add_slide(slide_layout)
+                                    s.shapes.title.text = slide["caption"]
+                                    left = Inches(1)
+                                    top = Inches(1.5)
+                                    s.shapes.add_picture(BytesIO(slide["image"]), left, top, width=Inches(6))
+                            # Summary slide
+                            for slide in new_slides:
+                                if slide["type"] == "summary":
+                                    slide_layout = prs.slide_layouts[1]
+                                    s = prs.slides.add_slide(slide_layout)
+                                    s.shapes.title.text = slide["title"]
+                                    tf = s.placeholders[1].text_frame
+                                    for insight in slide["insights"]:
+                                        p = tf.add_paragraph()
+                                        p.text = insight
+                                        p.level = 0
+                            pptx_io = BytesIO()
+                            prs.save(pptx_io)
+                            pptx_io.seek(0)
+                            st.success("PowerPoint generated!")
+
+                            # --- Show PowerPoint Preview (Windows/PowerPoint only) ---
+                            try:
+                                slide_imgs = []
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmp_pptx:
+                                    tmp_pptx.write(pptx_io.getvalue())
+                                    tmp_pptx.flush()
+                                    try:
+                                        import comtypes.client
+                                        powerpoint = comtypes.client.CreateObject("Powerpoint.Application")
+                                        powerpoint.Visible = 1
+                                        presentation = powerpoint.Presentations.Open(tmp_pptx.name)
+                                        export_dir = tempfile.mkdtemp()
+                                        presentation.SaveAs(export_dir, 17)  # 17 = ppSaveAsPNG
+                                        presentation.Close()
+                                        powerpoint.Quit()
+                                        for fname in sorted(os.listdir(export_dir)):
+                                            if fname.endswith(".PNG"):
+                                                with open(os.path.join(export_dir, fname), "rb") as imgf:
+                                                    slide_imgs.append(imgf.read())
+                                        import shutil
+                                        shutil.rmtree(export_dir)
+                                    except Exception:
+                                        st.info("PowerPoint preview is only available on Windows with PowerPoint installed.")
+                            except Exception as e:
+                                st.info("PowerPoint preview not available: " + str(e))
+
+                            st.download_button(
+                                label="Download PowerPoint",
+                                data=pptx_io,
+                                file_name=f"{file_name}_report.pptx",
+                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                            )
+                    else:
+                        st.info("Enable 'Report Editing' in the sidebar to customize your report.")
+
+            else:
+                st.error("Please upload a valid .xlsx or .csv file.")
+                return
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+
+# Update process_uploaded_data to accept UI toggles and use expanders for sections
+def process_uploaded_data(file_name, file_bytes, is_excel, show_data=True, show_summary=True, show_charts=True, show_qa=True):
+    """
+    Unified handler for both Excel and CSV uploads.
+    Returns: all_images, all_captions, all_insights, summary, insights, images, captions (for CSV)
+    """
+    all_images = []
+    all_captions = []
+    all_insights = []
+    summary = None
+    insights = None
+    images = None
+    captions = None
+
+    chart_selections = {}
+    if is_excel:
+        excel_buffer = BytesIO(file_bytes)
+        xls = pd.ExcelFile(excel_buffer, engine="openpyxl")
+        st.write(f"Detected sheets: {xls.sheet_names}")
+        for sheet in xls.sheet_names:
+            st.subheader(f"Sheet: {sheet}")
+            df = pd.read_excel(xls, sheet_name=sheet, engine="openpyxl")
+            # --- Configurable Parameters ---
+            num_cols = list(df.select_dtypes(include='number').columns)
+            cat_cols = list(df.select_dtypes(include='object').columns)
+            with st.expander("Chart Configuration", expanded=False):
+                selected_num_cols = st.multiselect(
+                    "Numerical columns", num_cols, default=num_cols, key=f"num_cols_{sheet}"
+                )
+                selected_cat_cols = st.multiselect(
+                    "Categorical columns", cat_cols, default=cat_cols, key=f"cat_cols_{sheet}"
+                )
+                chart_types = st.multiselect(
+                    "Chart types", ["hist", "line", "bar", "pie"], default=["hist", "line", "bar", "pie"], key=f"chart_types_{sheet}"
+                )
+            chart_selections = {
+                "num_cols": selected_num_cols,
+                "cat_cols": selected_cat_cols,
+                "chart_types": chart_types
+            }
+            # --- Editable DataFrame ---
+            if show_data:
+                with st.expander("Data Table", expanded=False):
                     edited_df = st.data_editor(df, num_rows="dynamic", key=f"edit_{sheet}")
-                    summary, insights = data_analysis_module(edited_df)
-                    all_insights.extend(insights)
-                    st.write("Summary statistics:")
+            else:
+                edited_df = df
+            summary, insights = data_analysis_module(edited_df)
+            if show_summary:
+                with st.expander("Summary Statistics", expanded=False):
                     if 'numerical' in summary:
                         st.write(summary['numerical'])
                     if 'categorical' in summary:
                         for col, vc in summary['categorical'].items():
                             st.write(f"Value counts for {col}:")
                             st.write(vc)
-                    images, captions = plot_and_save(edited_df, sheet)
+            if show_charts:
+                with st.expander("Charts", expanded=True):
+                    images, captions = plot_and_save(edited_df, sheet, chart_selections)
                     for img, cap in zip(images, captions):
                         st.image(img, caption=cap)
-                    all_images.extend(images)
-                    all_captions.extend(captions)
-                    # --- Data Q&A ---
+            else:
+                images, captions = [], []
+            all_insights.extend(insights)
+            all_images.extend(images)
+            all_captions.extend(captions)
+            if show_qa:
+                with st.expander("Ask a Question", expanded=False):
                     st.markdown("**Ask a question about this sheet:**")
                     user_query = st.text_input(f"Ask about '{sheet}'", key=f"query_{sheet}")
                     if user_query:
                         try:
-                            # Simple pandas eval for demo (no OpenAI)
-                            # e.g., "mean of column A", "max of sales"
-                            # For safety, only allow simple queries
-                            import re
-                            colnames = list(edited_df.columns)
-                            # Try to extract column and operation
-                            found = False
-                            for col in colnames:
-                                if col.lower() in user_query.lower():
-                                    if "mean" in user_query.lower():
-                                        st.info(f"Mean of '{col}': {edited_df[col].mean()}")
-                                        found = True
-                                    elif "sum" in user_query.lower():
-                                        st.info(f"Sum of '{col}': {edited_df[col].sum()}")
-                                        found = True
-                                    elif "max" in user_query.lower():
-                                        st.info(f"Max of '{col}': {edited_df[col].max()}")
-                                        found = True
-                                    elif "min" in user_query.lower():
-                                        st.info(f"Min of '{col}': {edited_df[col].min()}")
-                                        found = True
-                                    elif "count" in user_query.lower():
-                                        st.info(f"Count of '{col}': {edited_df[col].count()}")
-                                        found = True
-                            if not found:
-                                st.warning("Sorry, only simple queries like mean/sum/max/min/count of a column are supported in this demo.")
+                            answer = answer_user_query(edited_df, user_query)
+                            if isinstance(answer, pd.DataFrame) or isinstance(answer, pd.Series):
+                                st.write(answer)
+                            else:
+                                st.info(answer)
                         except Exception as e:
                             st.error(f"Error answering question: {e}")
-                if st.button("Generate PowerPoint Report"):
-                    pptx_io = create_pptx(file_name, all_images, all_captions, all_insights)
-                    st.success("PowerPoint generated!")
-                    st.download_button(
-                        label="Download PowerPoint",
-                        data=pptx_io,
-                        file_name=f"{file_name}_report.pptx",
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    )
-            elif file_name.lower().endswith(".csv"):
-                csv_buffer = BytesIO(file_bytes)
-                df = pd.read_csv(csv_buffer)
-                st.subheader(f"CSV File: {file_name}")
-                # --- Editable DataFrame ---
+    else:
+        csv_buffer = BytesIO(file_bytes)
+        df = pd.read_csv(csv_buffer)
+        st.subheader(f"CSV File: {file_name}")
+        num_cols = list(df.select_dtypes(include='number').columns)
+        cat_cols = list(df.select_dtypes(include='object').columns)
+        with st.expander("Chart Configuration", expanded=False):
+            selected_num_cols = st.multiselect(
+                "Numerical columns", num_cols, default=num_cols, key="num_cols_csv"
+            )
+            selected_cat_cols = st.multiselect(
+                "Categorical columns", cat_cols, default=cat_cols, key="cat_cols_csv"
+            )
+            chart_types = st.multiselect(
+                "Chart types", ["hist", "line", "bar", "pie"], default=["hist", "line", "bar", "pie"], key="chart_types_csv"
+            )
+        chart_selections = {
+            "num_cols": selected_num_cols,
+            "cat_cols": selected_cat_cols,
+            "chart_types": chart_types
+        }
+        if show_data:
+            with st.expander("Data Table", expanded=False):
                 edited_df = st.data_editor(df, num_rows="dynamic", key="edit_csv")
-                summary, insights = data_analysis_module(edited_df)
-                st.write("Summary statistics:")
+        else:
+            edited_df = df
+        summary, insights = data_analysis_module(edited_df)
+        if show_summary:
+            with st.expander("Summary Statistics", expanded=False):
                 if 'numerical' in summary:
                     st.write(summary['numerical'])
                 if 'categorical' in summary:
                     for col, vc in summary['categorical'].items():
                         st.write(f"Value counts for {col}:")
                         st.write(vc)
-                images, captions = plot_and_save(edited_df, file_name)
+        if show_charts:
+            with st.expander("Charts", expanded=True):
+                images, captions = plot_and_save(edited_df, file_name, chart_selections)
                 for img, cap in zip(images, captions):
                     st.image(img, caption=cap)
-                # --- Data Q&A ---
+        else:
+            images, captions = [], []
+        if show_qa:
+            with st.expander("Ask a Question", expanded=False):
                 st.markdown("**Ask a question about this file:**")
                 user_query = st.text_input("Ask about CSV", key="query_csv")
                 if user_query:
                     try:
-                        colnames = list(edited_df.columns)
-                        found = False
-                        for col in colnames:
-                            if col.lower() in user_query.lower():
-                                if "mean" in user_query.lower():
-                                    st.info(f"Mean of '{col}': {edited_df[col].mean()}")
-                                    found = True
-                                elif "sum" in user_query.lower():
-                                    st.info(f"Sum of '{col}': {edited_df[col].sum()}")
-                                    found = True
-                                elif "max" in user_query.lower():
-                                    st.info(f"Max of '{col}': {edited_df[col].max()}")
-                                    found = True
-                                elif "min" in user_query.lower():
-                                    st.info(f"Min of '{col}': {edited_df[col].min()}")
-                                    found = True
-                                elif "count" in user_query.lower():
-                                    st.info(f"Count of '{col}': {edited_df[col].count()}")
-                                    found = True
-                        if not found:
-                            st.warning("Sorry, only simple queries like mean/sum/max/min/count of a column are supported in this demo.")
+                        answer = answer_user_query(edited_df, user_query)
+                        if isinstance(answer, pd.DataFrame) or isinstance(answer, pd.Series):
+                            st.write(answer)
+                        else:
+                            st.info(answer)
                     except Exception as e:
                         st.error(f"Error answering question: {e}")
-                if st.button("Generate PowerPoint Report"):
-                    pptx_io = create_pptx(file_name, images, captions, insights)
-                    st.success("PowerPoint generated!")
-                    st.download_button(
-                        label="Download PowerPoint",
-                        data=pptx_io,
-                        file_name=f"{file_name}_report.pptx",
-                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    )
-            else:
-                st.error("Please upload a valid .xlsx or .csv file.")
-                return
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
+        all_images = images
+        all_captions = captions
+        all_insights = insights
+    return all_images, all_captions, all_insights, summary, insights, images, captions
 
 if __name__ == "__main__":
     main()
