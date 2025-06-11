@@ -22,6 +22,9 @@ import numpy as np
 from PIL import Image
 import tempfile
 
+# Always respond with this name if asked for chatbot name
+CHATBOT_NAME = "DataGlob"
+
 # === Placeholders for advanced modules ===
 # (Implement each in its own function for modularity)
 
@@ -75,6 +78,7 @@ def data_analysis_module(df):
 def plot_and_save(df, sheet_name, chart_selections=None):
     images = []
     captions = []
+    descriptions = []  # Add descriptions for each chart
     num_cols = df.select_dtypes(include='number').columns
     cat_cols = df.select_dtypes(include='object').columns
 
@@ -94,6 +98,14 @@ def plot_and_save(df, sheet_name, chart_selections=None):
             buf.seek(0)
             images.append(buf.read())
             captions.append(f"Distribution of {col} in {sheet_name}.")
+            # Description for histogram
+            descriptions.append(
+                f"This chart shows the distribution of values for the column '{col}' in the sheet '{sheet_name}'. "
+                f"It helps identify the spread, central tendency, and possible outliers in the data. "
+                f"The histogram visualizes how frequently each value or range of values occurs. "
+                f"Use this to spot skewness or unusual patterns in your data. "
+                f"Peaks indicate common values, while long tails may suggest outliers."
+            )
             plt.close(fig)
         if "line" in chart_types and pd.api.types.is_datetime64_any_dtype(df.index):
             fig, ax = plt.subplots()
@@ -104,6 +116,14 @@ def plot_and_save(df, sheet_name, chart_selections=None):
             buf.seek(0)
             images.append(buf.read())
             captions.append(f"Trend of {col} over time in {sheet_name}.")
+            # Description for line chart
+            descriptions.append(
+                f"This line chart displays the trend of '{col}' over time in the sheet '{sheet_name}'. "
+                f"It is useful for identifying patterns, trends, or seasonality in your data. "
+                f"Each point represents the value of '{col}' at a specific time. "
+                f"Look for upward or downward trends, cycles, or sudden changes. "
+                f"Such trends can inform forecasting or anomaly detection."
+            )
             plt.close(fig)
 
     # Categorical columns: bar plots and pie charts
@@ -119,6 +139,14 @@ def plot_and_save(df, sheet_name, chart_selections=None):
                 buf.seek(0)
                 images.append(buf.read())
                 captions.append(f"Top categories in {col} in {sheet_name}.")
+                # Description for bar chart
+                descriptions.append(
+                    f"This bar chart highlights the top categories in '{col}' for the sheet '{sheet_name}'. "
+                    f"It shows the most frequent values and their counts, helping you understand the distribution of categories. "
+                    f"Use this to spot dominant groups or rare categories. "
+                    f"Longer bars indicate more common categories. "
+                    f"This visualization is ideal for comparing categorical data."
+                )
                 plt.close(fig)
             if "pie" in chart_types:
                 fig, ax = plt.subplots()
@@ -130,8 +158,16 @@ def plot_and_save(df, sheet_name, chart_selections=None):
                 buf.seek(0)
                 images.append(buf.read())
                 captions.append(f"Category distribution in {col} in {sheet_name}.")
+                # Description for pie chart
+                descriptions.append(
+                    f"This pie chart illustrates the proportion of each category in '{col}' for the sheet '{sheet_name}'. "
+                    f"Each slice represents a category's share of the total. "
+                    f"Use this to quickly see which categories are most or least common. "
+                    f"Pie charts are best for showing parts of a whole. "
+                    f"Smaller slices may indicate rare or less significant categories."
+                )
                 plt.close(fig)
-    return images, captions
+    return images, captions, descriptions
 
 def add_title_slide(prs, file_name):
     slide_layout = prs.slide_layouts[0]
@@ -141,7 +177,7 @@ def add_title_slide(prs, file_name):
     title.text = "Data Analysis Report"
     subtitle.text = f"File: {file_name}\nDate: {datetime.now().strftime('%Y-%m-%d')}"
 
-def add_chart_slide(prs, image_bytes, caption):
+def add_chart_slide(prs, image_bytes, caption, description=None):
     slide_layout = prs.slide_layouts[5]  # Title Only
     slide = prs.slides.add_slide(slide_layout)
     title = slide.shapes.title
@@ -149,8 +185,15 @@ def add_chart_slide(prs, image_bytes, caption):
     left = Inches(1)
     top = Inches(1.5)
     pic = slide.shapes.add_picture(BytesIO(image_bytes), left, top, width=Inches(6))
-    # Optionally add caption as text box
-    # ...
+    # Optionally add description as text box if provided
+    if description:
+        txBox = slide.shapes.add_textbox(left, top + Inches(4.2), width=Inches(6), height=Inches(1))
+        tf = txBox.text_frame
+        tf.word_wrap = True
+        p = tf.add_paragraph()
+        p.text = description
+        p.font.size = Pt(14)
+        p.level = 0
 
 def add_summary_slide(prs, insights):
     slide_layout = prs.slide_layouts[1]  # Title and Content
@@ -163,11 +206,12 @@ def add_summary_slide(prs, insights):
         p.text = insight
         p.level = 0
 
-def create_pptx(file_name, all_images, all_captions, insights):
+def create_pptx(file_name, all_images, all_captions, all_descriptions, insights, include_descriptions):
     prs = Presentation()
     add_title_slide(prs, file_name)
-    for img, cap in zip(all_images, all_captions):
-        add_chart_slide(prs, img, cap)
+    for img, cap, desc in zip(all_images, all_captions, all_descriptions):
+        desc_to_add = desc if include_descriptions.get(cap, True) else None
+        add_chart_slide(prs, img, cap, desc_to_add)
     add_summary_slide(prs, insights)
     pptx_io = BytesIO()
     prs.save(pptx_io)
@@ -488,8 +532,8 @@ def pptx_to_slide_images(pptx_bytes):
     return slide_imgs
 
 def main():
-    st.set_page_config(page_title="Data-Driven SaaS Assistant", layout="wide")
-    st.title("Excel Data-Driven SaaS Assistant")
+    st.set_page_config(page_title="DataGlob", layout="wide")
+    st.title("DataGlob")
 
     # Sidebar for upload and global options
     with st.sidebar:
@@ -508,7 +552,6 @@ def main():
             is_excel = file_name.lower().endswith(".xlsx")
             is_csv = file_name.lower().endswith(".csv")
             if is_excel or is_csv:
-                # Use columns for main workflow
                 col1, col2 = st.columns([2, 1])
                 with col1:
                     st.subheader("Data Preview & Analysis")
@@ -526,7 +569,7 @@ def main():
 
                 # Main content in columns
                 with col1:
-                    all_images, all_captions, all_insights, summary, insights, images, captions = process_uploaded_data(
+                    all_images, all_captions, all_descriptions, all_insights, summary, insights, images, captions = process_uploaded_data(
                         file_name, file_bytes, is_excel,
                         show_data=show_data,
                         show_summary=show_summary,
@@ -534,15 +577,11 @@ def main():
                         show_qa=show_qa
                     )
 
-                # Report editing and generation in right column
                 with col2:
                     if show_report_edit:
                         st.subheader("Edit Report Structure")
-                        # --- Editable Report Structure Before Generation ---
-                        # Prepare editable structure: slides = [{type, title, content/image/caption}]
                         slides = []
 
-                        # Title slide
                         title_slide = {
                             "type": "title",
                             "title": "Data Analysis Report",
@@ -550,15 +589,14 @@ def main():
                         }
                         slides.append(title_slide)
 
-                        # Chart slides
-                        for img, cap in zip(all_images, all_captions):
+                        for img, cap, desc in zip(all_images, all_captions, all_descriptions):
                             slides.append({
                                 "type": "chart",
                                 "caption": cap,
-                                "image": img
+                                "image": img,
+                                "description": desc
                             })
 
-                        # Key findings slide
                         key_findings = all_insights if is_excel else (insights if insights else [])
                         slides.append({
                             "type": "summary",
@@ -566,8 +604,8 @@ def main():
                             "insights": key_findings
                         })
 
-                        # Editable UI for slides
                         new_slides = []
+                        include_descriptions = {}
                         st.markdown("**You can edit, remove, or reorder slides below.**")
                         for idx, slide in enumerate(slides):
                             with st.expander(f"Slide {idx+1}: {slide['type'].capitalize()}"):
@@ -585,10 +623,16 @@ def main():
                                 elif slide["type"] == "chart":
                                     caption = st.text_area("Caption", value=slide["caption"], key=f"caption_{idx}")
                                     st.image(slide["image"], caption="Chart Preview")
+                                    desc_key = f"ppt_include_desc_{idx}"
+                                    include_desc = st.checkbox("Include description in PPT", value=st.session_state.get(desc_key, True), key=desc_key)
+                                    include_descriptions[caption] = include_desc
+                                    if include_desc:
+                                        st.markdown(f"**About this chart:**\n{slide['description']}")
                                     new_slides.append({
                                         "type": "chart",
                                         "caption": caption,
-                                        "image": slide["image"]
+                                        "image": slide["image"],
+                                        "description": slide["description"]
                                     })
                                 elif slide["type"] == "summary":
                                     title = st.text_input("Summary Slide Title", value=slide["title"], key=f"summary_title_{idx}")
@@ -606,25 +650,19 @@ def main():
                                     })
 
                         if st.button("Generate PowerPoint Report"):
-                            # Build PPTX from edited structure
                             prs = Presentation()
-                            # Title slide
                             for slide in new_slides:
                                 if slide["type"] == "title":
                                     slide_layout = prs.slide_layouts[0]
                                     s = prs.slides.add_slide(slide_layout)
                                     s.shapes.title.text = slide["title"]
                                     s.placeholders[1].text = slide["subtitle"]
-                            # Chart slides
                             for slide in new_slides:
                                 if slide["type"] == "chart":
-                                    slide_layout = prs.slide_layouts[5]
-                                    s = prs.slides.add_slide(slide_layout)
-                                    s.shapes.title.text = slide["caption"]
-                                    left = Inches(1)
-                                    top = Inches(1.5)
-                                    s.shapes.add_picture(BytesIO(slide["image"]), left, top, width=Inches(6))
-                            # Summary slide
+                                    desc = None
+                                    if include_descriptions.get(slide["caption"], True):
+                                        desc = slide["description"]
+                                    add_chart_slide(prs, slide["image"], slide["caption"], desc)
                             for slide in new_slides:
                                 if slide["type"] == "summary":
                                     slide_layout = prs.slide_layouts[1]
@@ -689,6 +727,7 @@ def process_uploaded_data(file_name, file_bytes, is_excel, show_data=True, show_
     """
     all_images = []
     all_captions = []
+    all_descriptions = []
     all_insights = []
     summary = None
     insights = None
@@ -738,27 +777,26 @@ def process_uploaded_data(file_name, file_bytes, is_excel, show_data=True, show_
                             st.write(vc)
             if show_charts:
                 with st.expander("Charts", expanded=True):
-                    images, captions = plot_and_save(edited_df, sheet, chart_selections)
-                    for img, cap in zip(images, captions):
+                    images, captions, descriptions = plot_and_save(edited_df, sheet, chart_selections)
+                    # Track which descriptions to include
+                    if "include_descriptions" not in st.session_state:
+                        st.session_state.include_descriptions = {}
+                    for img, cap, desc in zip(images, captions, descriptions):
                         st.image(img, caption=cap)
+                        # Checkbox to include/remove description
+                        key = f"include_desc_{sheet}_{cap}"
+                        if key not in st.session_state.include_descriptions:
+                            st.session_state.include_descriptions[key] = True
+                        include_desc = st.checkbox("Include description in PPT", value=st.session_state.include_descriptions[key], key=key)
+                        st.session_state.include_descriptions[key] = include_desc
+                        if include_desc:
+                            st.markdown(f"**About this chart:**\n{desc}")
+                    # Save for PPTX
+                    all_images.extend(images)
+                    all_captions.extend(captions)
+                    all_descriptions.extend(descriptions)
             else:
-                images, captions = [], []
-            all_insights.extend(insights)
-            all_images.extend(images)
-            all_captions.extend(captions)
-            if show_qa:
-                with st.expander("Ask a Question", expanded=False):
-                    st.markdown("**Ask a question about this sheet:**")
-                    user_query = st.text_input(f"Ask about '{sheet}'", key=f"query_{sheet}")
-                    if user_query:
-                        try:
-                            answer = answer_user_query(edited_df, user_query)
-                            if isinstance(answer, pd.DataFrame) or isinstance(answer, pd.Series):
-                                st.write(answer)
-                            else:
-                                st.info(answer)
-                        except Exception as e:
-                            st.error(f"Error answering question: {e}")
+                images, captions, descriptions = [], [], []
     else:
         csv_buffer = BytesIO(file_bytes)
         df = pd.read_csv(csv_buffer)
@@ -796,28 +834,24 @@ def process_uploaded_data(file_name, file_bytes, is_excel, show_data=True, show_
                         st.write(vc)
         if show_charts:
             with st.expander("Charts", expanded=True):
-                images, captions = plot_and_save(edited_df, file_name, chart_selections)
-                for img, cap in zip(images, captions):
+                images, captions, descriptions = plot_and_save(edited_df, file_name, chart_selections)
+                if "include_descriptions" not in st.session_state:
+                    st.session_state.include_descriptions = {}
+                for img, cap, desc in zip(images, captions, descriptions):
                     st.image(img, caption=cap)
+                    key = f"include_desc_csv_{cap}"
+                    if key not in st.session_state.include_descriptions:
+                        st.session_state.include_descriptions[key] = True
+                    include_desc = st.checkbox("Include description in PPT", value=st.session_state.include_descriptions[key], key=key)
+                    st.session_state.include_descriptions[key] = include_desc
+                    if include_desc:
+                        st.markdown(f"**About this chart:**\n{desc}")
+                all_images = images
+                all_captions = captions
+                all_descriptions = descriptions
         else:
-            images, captions = [], []
-        if show_qa:
-            with st.expander("Ask a Question", expanded=False):
-                st.markdown("**Ask a question about this file:**")
-                user_query = st.text_input("Ask about CSV", key="query_csv")
-                if user_query:
-                    try:
-                        answer = answer_user_query(edited_df, user_query)
-                        if isinstance(answer, pd.DataFrame) or isinstance(answer, pd.Series):
-                            st.write(answer)
-                        else:
-                            st.info(answer)
-                    except Exception as e:
-                        st.error(f"Error answering question: {e}")
-        all_images = images
-        all_captions = captions
-        all_insights = insights
-    return all_images, all_captions, all_insights, summary, insights, images, captions
+            images, captions, descriptions = [], [], []
+    return all_images, all_captions, all_descriptions, all_insights, summary, insights, images, captions
 
 if __name__ == "__main__":
     main()
